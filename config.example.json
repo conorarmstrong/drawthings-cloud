@@ -1,0 +1,92 @@
+{
+  "region": "eu-west-1",
+  "regions": [
+    "eu-west-1",
+    "eu-west-2",
+    "eu-central-1",
+    "eu-north-1",
+    "us-east-1",
+    "us-east-2",
+    "us-west-2"
+  ],
+  "bucket": "my-drawthings-models",
+  "bucket_region": "eu-west-2",
+  "instance_type": "g7e.2xlarge",
+  "spot": true,
+  "idle_minutes": 10,
+  "max_hours": 6,
+  "volume_gb": 200,
+  "cpu_offload": false,
+  "allowed_cidrs": [
+    "auto"
+  ],
+  "shared_secret": "",
+  "model_volume": {
+    "enabled": true,
+    "name": "drawthings-models",
+    "size_gb": 100,
+    "iops": 3000,
+    "throughput_mibs": 500,
+    "delete_after_minutes": 30
+  },
+  "local_port": 7859,
+  "local_models_dir": "~/Library/Containers/com.liuliu.draw-things/Data/Documents/Models",
+  "models": [
+    "my_base_model_q8p.ckpt",
+    "my_vae_f16.ckpt",
+    "my_text_encoder_q8p.ckpt",
+    "my_style_lora_f16.ckpt",
+    "realesrgan_x4plus_f16.ckpt",
+    "custom.json",
+    "custom_lora.json"
+  ],
+  "key_name": "drawthings",
+  "ssh_key_file": "~/.ssh/drawthings_aws",
+  "ssh_user": "ubuntu",
+  "role_name": "drawthings-server",
+  "sg_name": "drawthings-ssh",
+  "project_tag": "drawthings",
+  "docker_image": "drawthingsai/draw-things-grpc-server-cli:latest",
+  "image_cache": true,
+  "ami_ssm_parameter": "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-22.04/latest/ami-id",
+  "server_port": 7859,
+  "gpu_idle_percent": 5,
+  "boot_timeout_minutes": 60,
+  "candidate_instance_types": [
+    "g7e.2xlarge",
+    "g7e.4xlarge",
+    "p5.4xlarge",
+    "g6e.2xlarge",
+    "g6e.4xlarge",
+    "g5.2xlarge"
+  ],
+  "fallback_instance_types": [
+    "g7e.4xlarge"
+  ],
+  "launch_retry_minutes": 10,
+  "pricing_locations": {
+    "eu-central-1": "EU (Frankfurt)",
+    "eu-north-1": "EU (Stockholm)",
+    "eu-west-1": "EU (Ireland)",
+    "eu-west-2": "EU (London)",
+    "eu-west-3": "EU (Paris)",
+    "us-east-1": "US East (N. Virginia)",
+    "us-east-2": "US East (Ohio)",
+    "us-west-2": "US West (Oregon)"
+  },
+  "warn_after_hours": 3,
+  "monthly_budget_usd": 0,
+  "notifications": true,
+  "profile": "",
+  "profiles": {
+    "cheap": {
+      "spot": true,
+      "idle_minutes": 10
+    },
+    "safe": {
+      "spot": false,
+      "idle_minutes": 30,
+      "max_hours": 8
+    }
+  }
+}
