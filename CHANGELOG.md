@@ -31,6 +31,8 @@ All notable changes. Newest first. Dates are when the change was made.
 - **Setup wizard.** With no `config.json`, `dt` asks for the bucket, looks up its region, lists the models folder to tick files from, then asks for regions and spot or on-demand.
 - **`config.example.json`.** Every key with example values. `config.json` is now in `.gitignore`.
 - **`~` in `local_models_dir`** means your home folder.
+- **MIT license.**
+- **New name: `drawthings-cloud`.** The module is `github.com/conorarmstrong/drawthings-cloud`, so `go install` works. The binary is still `dt` when built from a clone.
 
 ### Fixed
 

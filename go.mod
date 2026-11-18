@@ -1,4 +1,4 @@
-module dtaws
+module github.com/conorarmstrong/drawthings-cloud
 
 go 1.26.4
 

@@ -1,4 +1,4 @@
-# Draw Things on AWS
+# drawthings-cloud
 
 `dt` is a terminal app that rents a GPU server on AWS for the [Draw Things](https://drawthings.ai) app on your Mac.
 It finds the cheapest region with spare capacity, boots a Draw Things gRPC server there, copies your models onto it,
@@ -31,6 +31,8 @@ It is one binary and one `config.json`. A setup wizard writes the config on firs
 
 See also [KNOWN_ISSUES.md](KNOWN_ISSUES.md) and [CHANGELOG.md](CHANGELOG.md).
 
+This is an unofficial tool. It is not made by or affiliated with Draw Things. It is MIT licensed, see [LICENSE](LICENSE).
+
 ## What it does
 
 - **Cheapest region first.** Each launch checks live spot or on-demand prices in every configured region and tries them cheapest first.
@@ -56,6 +58,8 @@ The `aws` CLI is **not** needed. `dt` talks to AWS through the AWS SDK for Go.
 ## Build and first run
 
 ```sh
+go install github.com/conorarmstrong/drawthings-cloud@latest   # installs as drawthings-cloud
+# or, from a clone:
 go build -o dt .
 ./dt
 ```
