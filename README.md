@@ -36,7 +36,7 @@ This is an unofficial tool. It is not made by or affiliated with Draw Things. It
 ## What it does
 
 - **Cheapest region first.** Each launch checks live spot or on-demand prices in every configured region and tries them cheapest first.
-- **Capacity hunting.** GPU spot capacity is scarce. When a zone is full it tries the next zone, follows AWS's own "try this zone" hints, then the next region, then fallback instance types. It keeps retrying with backoff for a set time.
+- **Capacity hunting.** GPU spot capacity is scarce. When a zone is full it tries the next zone, follows AWS's own "try this zone" hints, then the next region, with the preferred and fallback instance types ranked together by price. It keeps retrying with backoff for a set time.
 - **Fast warm boots.** Models live on a persistent EBS volume per zone. A warm boot skips the copy and is ready in about two minutes.
 - **Safe by default.** Only SSH is open, and only from your IP. Draw Things talks to the server through an SSH tunnel on `127.0.0.1`.
 - **Never forgotten.** The server terminates itself after a set idle time, after a hard maximum lifetime, or if it never becomes ready. A Lambda deletes the model volume after it sits unused.
@@ -139,6 +139,7 @@ and a rough fit check against the total size of your models.
 ![Models tab](docs/screenshots/models.svg)
 
 Each required model with its size on your Mac and in S3. `u` uploads anything missing or a different size.
+With `model_sets` in `config.json`, the panel title shows the active set. `enter` or `m` cycles through the sets, for example `ltx` and `minimax`. Only the shared `models` list plus the active set is listed, uploaded and copied to the server.
 Below is the persistent model volume, one per zone, with `d` to delete unused ones.
 
 ### 4 Connect
@@ -168,6 +169,7 @@ Keys only appear in the bottom bar when they do something.
 | `e` | server ready | Reset the idle timer. |
 | `g` | server running | Save the server's logs to `logs/diag-<time>/`. |
 | `u` | Models tab | Upload missing models to S3. |
+| `enter` or `m` | Models tab | Cycle the model set synced to the server. |
 | `i` | anywhere | Allow this Mac's current IP to SSH. |
 | `a` / `A` | anywhere | Add an SSH IP / a direct (phone) IP. |
 | `backspace` | Connect tab | Remove the selected rule. |
@@ -187,11 +189,11 @@ A key pressed twice asks for confirmation in a red line above the key bar. Any o
 flowchart TD
   A[Press l] --> B{Server already running<br/>in any region?}
   B -- yes --> X[Refuse]
-  B -- no --> C[For each instance type:<br/>preferred, then fallbacks]
-  C --> D[Which regions offer it?]
-  D --> E[Live price in each, sort cheapest first]
+  B -- no --> C[Preferred and fallback types]
+  C --> D[Which regions offer each?]
+  D --> E[Live price of every type in every region,<br/>sort cheapest first, ties by type order]
   E --> F[Set up regions that need it, in parallel]
-  F --> G[Try regions in price order]
+  F --> G[Try type and region pairs in price order]
   G --> H[Try zones: zones with a model volume first,<br/>AWS-suggested zone next]
   H -- launched --> I[Attach the zone's model volume,<br/>creating it if needed]
   H -- no capacity anywhere --> J{Retry window left?}
@@ -204,7 +206,7 @@ Details:
 - **Price source.** Spot uses the lowest current zone price from the spot price history. On-demand uses the AWS Pricing API, which needs the region in `pricing_locations`.
 - **One attempt per zone.** `run-instances` is called with SDK retries off, so a full zone fails in about a second instead of twenty.
 - **Zone hints.** When AWS replies "...or choosing us-east-1b", that zone is tried next.
-- **Fallback types.** `fallback_instance_types` are tried, in order, only after the main type fails everywhere.
+- **Fallback types.** `fallback_instance_types` compete with the main type on price. A larger type that is cheaper right now is tried first. Equal prices go to the main type first, then the fallbacks in order.
 - **Retry window.** `launch_retry_minutes` (default 10) bounds the whole launch. Waits start at 30 seconds and double up to 4 minutes.
 - **Firewall.** Port 22 is set to exactly `allowed_cidrs`, where `auto` means your current public IP. The server port is closed, because the tunnel is used.
 - **Dry run.** `./dt -dry-launch` runs the whole path, but EC2 only validates the request. Nothing is started or changed. It checks permissions, the AMI, key, security group, IAM profile and boot script. It does not check capacity.
@@ -216,7 +218,7 @@ The boot script is `assets/userdata.sh`. It is built into `dt` and filled in fro
 1. **Instance.** Ubuntu with the NVIDIA driver, from the AWS Deep Learning base AMI (`ami_ssm_parameter`). Root disk is gp3, 16000 IOPS, 1000 MiB/s.
 2. **Setup.** Starts the watchdog, the metrics feed and the timeline logger. Uses IMDSv2 only.
 3. **Volume.** Waits for the model volume, formats it on first use, and mounts it at `/opt/models`.
-4. **Models.** Copies the model files from S3, three at a time. Files already on the volume are skipped, so a warm boot takes about a second here.
+4. **Models.** Copies the model files from S3, three at a time. Only the shared `models` list and the active `model_set` are copied. With no `model_sets`, every file under `models/` is copied. Files already on the volume are skipped, so a warm boot takes about a second here.
 5. **Server image.** Runs in parallel with the model copy. With `image_cache` on, it loads a compressed copy of the Docker image from your bucket when it matches Docker Hub, otherwise it pulls from Docker Hub and saves a copy for next time.
 6. **Server.** Starts `drawthingsai/draw-things-grpc-server-cli` with your models, waits for the port, and reports **ready**.
 
@@ -242,6 +244,7 @@ Press `e` to reset the idle timer by hand.
 
 With `model_volume.enabled` on, models are kept on a gp3 EBS volume so the next boot skips the copy.
 
+- **Files pile up.** Sync never deletes. Switching `model_set` adds the new set's files next to the old ones, so size the volume for every set you use, or delete it to start clean.
 - **One volume per zone.** A volume can only attach to a server in its own zone. Zones that already hold one are tried first. A new zone does one full copy, then boots warm.
 - **Created after launch.** A volume is only created once an instance has started in that zone, so a failed zone never leaves a volume behind.
 - **Speed.** `iops` and `throughput_mibs` are applied at every launch. AWS allows one change per volume every six hours.
@@ -274,7 +277,7 @@ The dashboard shows the session cost so far and the month's estimated spend. Ses
 | `bucket` | | S3 bucket holding `models/`. Asked for by the wizard. |
 | `bucket_region` | | The bucket's region. Looked up by the wizard. |
 | `instance_type` | g7e.2xlarge | Preferred instance type. |
-| `fallback_instance_types` | g7e.4xlarge | Tried in order after the preferred type fails everywhere. |
+| `fallback_instance_types` | g7e.4xlarge | Ranked with the preferred type by current price, in every region. |
 | `candidate_instance_types` | g7e.2xlarge, g7e.4xlarge, p5.4xlarge, g6e.2xlarge, g6e.4xlarge, g5.2xlarge | Shown on the Config tab. |
 | `spot` | true | Spot or on-demand. |
 | `launch_retry_minutes` | 10 | How long a launch keeps retrying. |
@@ -295,7 +298,8 @@ The dashboard shows the session cost so far and the month's estimated spend. Ses
 | `local_port` | 7859 | Tunnel port on this Mac. |
 | `server_port` | 7859 | Port the server listens on. |
 | `local_models_dir` | the Draw Things app folder | Where your models live on this Mac. |
-| `models` | | Files the server needs. Picked in the wizard. |
+| `models` | | Files always synced to the server. Picked in the wizard. |
+| `model_sets`, `model_set` | | Optional named file lists, for example `ltx` and `minimax`. Only `models` plus the active set are synced. With no sets, the whole `models/` prefix is synced. `enter` or `m` on the Models tab cycles them. |
 | `key_name` | drawthings | EC2 key pair name. |
 | `ssh_key_file` | ~/.ssh/drawthings_aws | Private key. Created with `ssh-keygen` if missing. |
 | `ssh_user` | ubuntu | Server login. |

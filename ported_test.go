@@ -144,3 +144,16 @@ func stripANSI(s string) string {
 	}
 	return b.String()
 }
+
+func TestOrderCands(t *testing.T) {
+	in := []cand{{"g7e.2xlarge", "a", 3.0}, {"g7e.2xlarge", "b", 0}, {"g7e.4xlarge", "a", 2.0}, {"g7e.4xlarge", "b", 3.0}}
+	got := orderCands(in)
+	var s []string
+	for _, k := range got {
+		s = append(s, k.ty+"@"+k.region)
+	}
+	want := "g7e.4xlarge@a g7e.2xlarge@a g7e.4xlarge@b g7e.2xlarge@b"
+	if strings.Join(s, " ") != want {
+		t.Fatalf("got %v want %s", s, want)
+	}
+}

@@ -715,7 +715,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // requiredBytes counts models present in S3 with a size matching the local copy.
 func (m model) requiredBytes() (have, total int64, missing int) {
-	for _, f := range m.cfg.Models {
+	for _, f := range m.cfg.wanted() {
 		if s, ok := m.s3[f]; ok {
 			if st, err := os.Stat(filepath.Join(m.cfg.LocalModels, f)); err == nil && st.Size() != s {
 				missing++
@@ -891,6 +891,24 @@ func (m model) key(k tea.KeyMsg) (model, tea.Cmd) {
 		}
 	case "r":
 		return m, m.refreshAll()
+	case "m", "enter":
+		if s == "enter" && m.tab != tabModels {
+			break
+		}
+		if m.tab == tabModels && m.busy == "" {
+			if names := m.cfg.modelSetNames(); len(names) > 0 {
+				i := -1
+				for k, n := range names {
+					if n == m.cfg.ModelSet {
+						i = k
+					}
+				}
+				m.cfg.ModelSet = names[(i+1)%len(names)]
+				m.saveCfg()
+				m.logf("model set: %s", m.cfg.ModelSet)
+			}
+		}
+		return m, nil
 	case "u":
 		if m.tab == tabModels && m.busy == "" {
 			m.busy = "uploading"

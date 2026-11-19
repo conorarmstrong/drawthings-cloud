@@ -8,6 +8,7 @@ The move from shell scripts to the AWS SDK for Go was checked with read-only cal
 These paths have unit tests, or ran in their earlier shell form, but have not run end to end through the SDK yet:
 
 - a real launch, including the model volume create and attach
+- model sets: the filtered S3 sync in the boot script, and the combined price ranking of instance types across regions
 - terminate, force-detach and volume delete
 - diagnostics and model upload
 - first-time setup of a new region, including IAM and the reaper Lambda
@@ -26,8 +27,14 @@ Watch the Log tab on the first run of each. `./dt -dry-launch` checks the launch
 ## Boot speed
 
 - **The S3 image cache was slower than Docker Hub in one measurement.** On a warm boot, loading the cached server image took about 110 seconds, while a Docker Hub pull took about 43. That is one sample each. Setting `image_cache` to `false` may cut warm boots from about 2 minutes to about 1.
-- **Cold boots copy every model.** A new zone, or a zone whose volume the reaper deleted, copies all models from S3. One measured cold boot was ready in 135 seconds, copying three files at a time at 220 to 290 MiB/s each.
+- **Cold boots copy every model in the active set.** A new zone, or a zone whose volume the reaper deleted, copies those models from S3. One measured cold boot was ready in 135 seconds, copying three files at a time at 220 to 290 MiB/s each.
 - **Servers outside the bucket's region pay transfer.** A cold boot in another region is charged per GB for cross-region S3 transfer, and can be slower.
+
+## Model sets and ranking
+
+- **The volume keeps files from earlier sets.** The sync only adds. Using both `ltx` and `minimax` needs a volume big enough for both, or a fresh volume per switch.
+- **Cheapest can mean a cold boot.** Instance types and regions are ranked by price alone. The cheapest pair may be in a zone with no model volume, which costs a full copy from S3.
+- **A config saved by a running `dt` overwrites file edits.** Edit `config.json` with `dt` closed, or restart it afterwards.
 
 ## Costs shown are estimates
 

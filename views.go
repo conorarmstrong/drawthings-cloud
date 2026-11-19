@@ -327,7 +327,7 @@ func (m model) viewConfig() string {
 func (m model) viewModels() string {
 	w := m.w - 2
 	rows := []string{sDim.Render(fmt.Sprintf("%-62s %12s %12s  %s", "file", "local", "s3", "status"))}
-	for _, f := range m.cfg.Models {
+	for _, f := range m.cfg.wanted() {
 		var ls int64 = -1
 		if st, err := os.Stat(filepath.Join(m.cfg.LocalModels, f)); err == nil {
 			ls = st.Size()
@@ -359,7 +359,11 @@ func (m model) viewModels() string {
 		rows = append(rows, sBad.Render(m.s3Err))
 	}
 	rows = append(rows, sDim.Render("Press u to upload anything missing from "+m.cfg.LocalModels+". r refreshes."))
-	out := panel("Required models", w, strings.Join(rows, "\n"), cYellow)
+	title := "Required models"
+	if len(m.cfg.ModelSets) > 0 {
+		title += "  set: " + onelse(m.cfg.ModelSet, "(none)")
+	}
+	out := panel(title, w, strings.Join(rows, "\n"), cYellow)
 
 	v := []string{fmt.Sprintf("Model volume  %s", m.volumeSummary()),
 		sDim.Render("Keeps models between runs so a launch skips the S3 sync. It is billed monthly while it exists, even with no server."),

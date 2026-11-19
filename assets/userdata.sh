@@ -184,6 +184,10 @@ aws configure set default.s3.max_concurrent_requests 64
 aws configure set default.s3.multipart_chunksize 64MB
 ev "model sync: listing s3://@@BUCKET@@/models/ (bucket region @@BUCKET_REGION@@)"
 aws s3api list-objects-v2 --bucket @@BUCKET@@ --prefix models/ --query 'Contents[].[Key,Size]' --output text > $S/filelist
+WANT="@@MODELS@@"
+if [ "$WANT" != "*" ]; then
+  awk -v want=",$WANT," 'index(want, "," substr($1,8) ",")' $S/filelist > $S/filelist.f && mv $S/filelist.f $S/filelist
+fi
 grep -c . $S/filelist > $S/files_total
 ev "model sync: $(cat $S/files_total) files, $(awk '{t+=$2} END{printf "%.1f", t/1073741824}' $S/filelist) GiB total, 3 at a time"
 sz() { if [ "$1" -ge 1048576 ]; then echo "$(( $1/1048576 )) MiB"; else echo "$1 bytes"; fi; }
@@ -206,7 +210,8 @@ export -f fetch_model
 t_sync=$(date +%s)
 grep . $S/filelist | xargs -P 3 -L 1 bash -c 'fetch_model "$0" "$1"'
 ev "model sync: all files fetched in $(( $(date +%s)-t_sync ))s, verifying"
-until aws s3 sync s3://@@BUCKET@@/models/ /opt/models --only-show-errors; do ev "model sync: verify pass failed, retrying"; sleep 10; done
+SYNCARGS=(); if [ "$WANT" != "*" ]; then SYNCARGS=(--exclude "*"); for f in ${WANT//,/ }; do SYNCARGS+=(--include "$f"); done; fi
+until aws s3 sync s3://@@BUCKET@@/models/ /opt/models "${SYNCARGS[@]}" --only-show-errors; do ev "model sync: verify pass failed, retrying"; sleep 10; done
 ev "model sync: done, $(du -sh /opt/models 2>/dev/null | cut -f1) on disk"
 
 step "Finishing the server image"

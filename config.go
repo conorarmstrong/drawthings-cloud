@@ -44,9 +44,11 @@ type Config struct {
 
 	ModelVolume ModelVolume `json:"model_volume"`
 
-	LocalPort   int      `json:"local_port"`
-	LocalModels string   `json:"local_models_dir"`
-	Models      []string `json:"models"`
+	LocalPort   int                 `json:"local_port"`
+	LocalModels string              `json:"local_models_dir"`
+	Models      []string            `json:"models"`               // always synced
+	ModelSets   map[string][]string `json:"model_sets,omitempty"` // named extras, one is synced with Models
+	ModelSet    string              `json:"model_set,omitempty"`
 
 	KeyName     string `json:"key_name"`
 	KeyFile     string `json:"ssh_key_file"`
@@ -158,6 +160,28 @@ func loadConfig(path string) Config {
 func (c Config) save(path string) {
 	b, _ := json.MarshalIndent(c, "", "  ")
 	_ = os.WriteFile(path, append(b, '\n'), 0o644)
+}
+
+// wanted is the file list for this launch: Models plus the active model set.
+func (c Config) wanted() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range append(append([]string{}, c.Models...), c.ModelSets[c.ModelSet]...) {
+		if !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func (c Config) modelSetNames() []string {
+	var n []string
+	for k := range c.ModelSets {
+		n = append(n, k)
+	}
+	sort.Strings(n)
+	return n
 }
 
 func (c Config) profileNames() []string {

@@ -2,7 +2,18 @@
 
 All notable changes. Newest first. Dates are when the change was made.
 
-## Unreleased (2026-11-18)
+## 1.1 (2026-11-19)
+
+### Added
+
+- **Model sets.** `model_sets` and `model_set` in `config.json` group model files by pipeline, for example `ltx` and `minimax`. `models` stays as the shared list. `enter` or `m` on the Models tab picks the active set and saves it.
+- **Filtered server sync.** The boot script copies only the shared list and the active set, instead of everything under `models/`. With no sets defined, it still copies everything.
+
+### Changed
+
+- **Price ranking.** A launch ranks every instance type in every region together, cheapest first, so a cheaper `g7e.4xlarge` can go before `g7e.2xlarge`. Ties go to the main type, then the fallbacks in order. Before, each type was tried in full before the next.
+
+## 1.0 (2026-11-18)
 
 ### Changed
 

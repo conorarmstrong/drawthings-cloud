@@ -210,7 +210,7 @@ func (c countingReader) Read(p []byte) (int, error) {
 func (j *job) upload(s3sizes map[string]int64) (string, error) {
 	c := j.c
 	var todo []string
-	for _, f := range c.Models {
+	for _, f := range c.wanted() {
 		st, err := os.Stat(filepath.Join(c.LocalModels, f))
 		if err != nil {
 			j.logf("", "skipping %s: not on this Mac", f)

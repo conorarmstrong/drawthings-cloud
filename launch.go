@@ -115,8 +115,8 @@ func reason(err error) string {
 	return truncate(err.Error(), 120)
 }
 
-// launch starts the server: for each instance type (preferred first, then fallbacks) it tries every
-// region that offers the type, cheapest first. If all fail it waits and starts over until
+// launch starts the server: it tries every instance type (preferred, then fallbacks) in every region that
+// offers it, cheapest first across all of them. If all fail it waits and starts over until
 // launch_retry_minutes runs out. Cancelling ctx stops it at the next step.
 func (j *job) launch(relaunch bool) (string, error) {
 	c, t0 := j.c, time.Now()
@@ -144,21 +144,18 @@ func (j *job) launch(relaunch bool) (string, error) {
 	wait := 30 * time.Second
 	for round := 1; ; round++ {
 		j.logf("", "==== round %d", round)
-		var fails []string
-		for _, ty := range types {
-			if j.ctx.Err() != nil {
-				return "", errCancelled
-			}
-			id, why, err := j.tryType(ty)
-			if err == nil {
-				j.logf("", "%s after %s in total", onoff(j.dry, "dry run passed", "launched "+id), secs(t0))
-				return id, nil
-			}
-			if errors.Is(err, errCancelled) {
-				return "", err
-			}
-			fails = append(fails, ty+": "+why)
+		if j.ctx.Err() != nil {
+			return "", errCancelled
 		}
+		id, why, err := j.tryTypes(types)
+		if err == nil {
+			j.logf("", "%s after %s in total", onoff(j.dry, "dry run passed", "launched "+id), secs(t0))
+			return id, nil
+		}
+		if errors.Is(err, errCancelled) {
+			return "", err
+		}
+		fails := []string{why}
 		left := time.Duration(c.RetryMin)*time.Minute - time.Since(t0)
 		if left <= wait {
 			return "", fmt.Errorf("launch failed in all regions after %s and %d round(s): %s", secs(t0), round, strings.Join(fails, "; "))
@@ -203,60 +200,91 @@ func orderByPrice(regions []string, prices []float64) []string {
 	return out
 }
 
-// tryType tries one instance type across all regions, cheapest first.
-func (j *job) tryType(ty string) (id, why string, err error) {
+// cand is one instance type in one region.
+type cand struct {
+	ty, region string
+	price      float64
+}
+
+// orderCands sorts cheapest first, so a bigger type that is cheaper right now goes before a smaller one.
+// Unknown prices (0) go last. Ties keep the input order, which is type order then region order.
+func orderCands(cs []cand) []cand {
+	out := append([]cand(nil), cs...)
+	sort.SliceStable(out, func(a, b int) bool {
+		pa, pb := out[a].price, out[b].price
+		if pa == 0 || pb == 0 {
+			return pa != 0 && pb == 0
+		}
+		return pa < pb
+	})
+	return out
+}
+
+// tryTypes tries every instance type in every region, cheapest first across all of them.
+func (j *job) tryTypes(types []string) (id, why string, err error) {
 	c := j.c
-	j.logf("", "---- instance type %s", ty)
-	offers, errs := eachRegion(c.Regions, func(r string) ([]string, error) { return offeredTypes(r, []string{ty}) })
-	var ok []string
-	for i, r := range c.Regions {
-		switch {
-		case errs[i] != nil:
-			j.logf(r, "skipping: offering lookup failed: %v", errs[i])
-			j.setRow(launchRow{Type: ty, Region: r, Status: "error", Detail: errs[i].Error()})
-		case len(offers[i]) == 0:
-			j.logf(r, "skipping: does not offer %s", ty)
-			j.setRow(launchRow{Type: ty, Region: r, Status: "not offered"})
-		default:
-			ok = append(ok, r)
+	var cands []cand
+	for _, ty := range types {
+		offers, errs := eachRegion(c.Regions, func(r string) ([]string, error) { return offeredTypes(r, []string{ty}) })
+		var ok []string
+		for i, r := range c.Regions {
+			switch {
+			case errs[i] != nil:
+				j.logf(r, "skipping %s: offering lookup failed: %v", ty, errs[i])
+				j.setRow(launchRow{Type: ty, Region: r, Status: "error", Detail: errs[i].Error()})
+			case len(offers[i]) == 0:
+				j.logf(r, "skipping: does not offer %s", ty)
+				j.setRow(launchRow{Type: ty, Region: r, Status: "not offered"})
+			default:
+				ok = append(ok, r)
+			}
+		}
+		prices, perrs := eachRegion(ok, func(r string) (float64, error) { return j.priceIn(r, ty) })
+		for i, r := range ok {
+			if perrs[i] != nil {
+				j.logf(r, "price lookup failed for %s: %v", ty, perrs[i])
+			}
+			cands = append(cands, cand{ty, r, prices[i]})
 		}
 	}
-	if len(ok) == 0 {
+	if len(cands) == 0 {
 		return "", "not offered in any configured region", errors.New("not offered")
 	}
-	prices, perrs := eachRegion(ok, func(r string) (float64, error) { return j.priceIn(r, ty) })
-	pmap := map[string]float64{}
+	cands = orderCands(cands)
 	var parts []string
-	for i, r := range ok {
-		pmap[r] = prices[i]
-		if perrs[i] != nil {
-			j.logf(r, "price lookup failed: %v", perrs[i])
-		}
+	for _, k := range cands {
+		parts = append(parts, fmt.Sprintf("%s@%s=%s", k.ty, k.region, priceStr(k.price)))
+		j.setRow(launchRow{Type: k.ty, Region: k.region, Price: k.price, Status: "queued"})
 	}
-	order := orderByPrice(ok, prices)
-	for _, r := range order {
-		parts = append(parts, fmt.Sprintf("%s=%s", r, priceStr(pmap[r])))
-		j.setRow(launchRow{Type: ty, Region: r, Price: pmap[r], Status: "queued"})
-	}
-	j.logf("", "price order %s (USD/h, %s): %s", ty, market(c.Spot), strings.Join(parts, " "))
+	j.logf("", "price order (USD/h, %s): %s", market(c.Spot), strings.Join(parts, " "))
 
-	_, serrs := eachRegion(order, func(r string) (struct{}, error) { return struct{}{}, j.ensureRegion(r) })
+	var regions []string
+	for _, k := range cands {
+		regions = append(regions, k.region)
+	}
+	regions = uniq(regions)
+	_, serrs := eachRegion(regions, func(r string) (struct{}, error) { return struct{}{}, j.ensureRegion(r) })
+	failed := map[string]error{}
+	for i, r := range regions {
+		failed[r] = serrs[i]
+	}
 	var reasons []string
-	for i, r := range order {
+	for _, k := range cands {
 		if j.ctx.Err() != nil {
 			return "", "", errCancelled
 		}
-		if serrs[i] != nil {
-			j.setRow(launchRow{Type: ty, Region: r, Price: pmap[r], Status: "setup failed", Detail: serrs[i].Error()})
-			reasons = append(reasons, r+": setup failed")
+		r, ty := k.region, k.ty
+		if failed[r] != nil {
+			j.setRow(launchRow{Type: ty, Region: r, Price: k.price, Status: "setup failed", Detail: failed[r].Error()})
+			reasons = append(reasons, r+" "+ty+": setup failed")
 			continue
 		}
-		j.setRow(launchRow{Type: ty, Region: r, Price: pmap[r], Status: "trying"})
+		j.setRow(launchRow{Type: ty, Region: r, Price: k.price, Status: "trying"})
 		j.logf(r, "== trying %s", ty)
 		t := time.Now()
 		id, zone, err := j.launchIn(r, ty)
 		if err == nil {
-			j.setRow(launchRow{Type: ty, Region: r, Price: pmap[r], Status: "launched", Detail: zone})
+			j.setRow(launchRow{Type: ty, Region: r, Price: k.price, Status: "launched", Detail: zone})
 			j.logf(r, "%s %s in %s after %s", onoff(j.dry, "would launch", "launched"), ty, zone, secs(t))
 			if c.ModelVolume.Enabled && !j.dry {
 				j.attachVolume(r, id, zone)
@@ -264,13 +292,13 @@ func (j *job) tryType(ty string) (id, why string, err error) {
 			return id, "", nil
 		}
 		if errors.Is(err, errCancelled) {
-			j.setRow(launchRow{Type: ty, Region: r, Price: pmap[r], Status: "cancelled"})
+			j.setRow(launchRow{Type: ty, Region: r, Price: k.price, Status: "cancelled"})
 			return "", "", err
 		}
 		why := reason(err)
-		j.setRow(launchRow{Type: ty, Region: r, Price: pmap[r], Status: onoff(why == "InsufficientInstanceCapacity", "no capacity", "failed"), Detail: why})
+		j.setRow(launchRow{Type: ty, Region: r, Price: k.price, Status: onoff(why == "InsufficientInstanceCapacity", "no capacity", "failed"), Detail: why})
 		j.logf(r, "failed after %s (%s), moving on", secs(t), why)
-		reasons = append(reasons, r+": "+why)
+		reasons = append(reasons, r+" "+ty+": "+why)
 	}
 	return "", strings.Join(reasons, ", "), errors.New("no capacity")
 }
@@ -358,8 +386,16 @@ func renderUserdata(c Config, volume string) string {
 		"@@BUCKET@@", c.Bucket, "@@BUCKET_REGION@@", c.BucketRegion, "@@IDLE_MIN@@", strconv.Itoa(c.IdleMin),
 		"@@MAX_HOURS@@", strconv.Itoa(c.MaxHours), "@@CPU_OFFLOAD@@", b(c.CPUOffload), "@@PORT@@", strconv.Itoa(c.ServerPort),
 		"@@IMAGE@@", c.DockerImage, "@@GPU_IDLE@@", strconv.Itoa(c.GPUIdlePct), "@@BOOT_TIMEOUT@@", strconv.Itoa(c.BootTimeoutMin),
-		"@@IMGCACHE@@", b(c.ImageCache), "@@VOLUME_ID@@", volume, "@@SECRET@@", secret,
+		"@@IMGCACHE@@", b(c.ImageCache), "@@VOLUME_ID@@", volume, "@@SECRET@@", secret, "@@MODELS@@", modelArg(c),
 	).Replace(userdataTmpl)
+}
+
+// modelArg is the comma separated files to sync, or * when no model sets are defined (sync everything).
+func modelArg(c Config) string {
+	if len(c.ModelSets) == 0 {
+		return "*"
+	}
+	return strings.Join(c.wanted(), ",")
 }
 
 var hintRE = regexp.MustCompile(`choosing ([a-z0-9-]*[a-z])`)

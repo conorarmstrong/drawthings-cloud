@@ -108,6 +108,9 @@ func (m model) keyBar() string {
 	case tabModels:
 		if free {
 			add("u", "upload missing")
+			if len(m.cfg.ModelSets) > 0 {
+				add("enter/m", "model set")
+			}
 		}
 		if free && !down && m.unusedVols() > 0 {
 			add("d", "delete unused volumes")
